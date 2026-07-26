@@ -21,19 +21,9 @@ app.use(
 
 app.use(
     cors({
-        origin:"*"
+        origin: "*"
     })
 );
-
-
-// ================= FRONTEND =================
-
-app.use(
-    express.static(
-        path.join(__dirname,"..","frontend")
-    )
-);
-
 
 
 // ================= CONFIG =================
@@ -47,23 +37,17 @@ const AI_SERVER = process.env.AI_SERVER || "https://emotions-detector-backend-a6
 
 // ================= TEMP DATABASE =================
 
-const users=[];
+const users = [];
 
 
 
 // ================= HOME =================
 
-app.get("/",(req,res)=>{
-
-    res.sendFile(
-        path.join(
-            __dirname,
-            "..",
-            "frontend",
-            "index.html"
-        )
-    );
-
+app.get("/", (req, res) => {
+    res.json({
+        message: "Emotion Detector Node.js Backend is Running 🚀",
+        ai_server: AI_SERVER
+    });
 });
 
 
@@ -71,103 +55,56 @@ app.get("/",(req,res)=>{
 // ================= REGISTER =================
 
 
-app.post("/register",async(req,res)=>{
+app.post("/register", async (req, res) => {
 
+    try {
 
-try{
+        const {
+            name,
+            email,
+            password
+        } = req.body;
 
+        if (!name || !email || !password) {
+            return res.status(400).json({
+                message: "All fields required"
+            });
+        }
 
-const {
-name,
-email,
-password
-}=req.body;
+        const existingUser = users.find(
+            user => user.email === email
+        );
 
+        if (existingUser) {
+            return res.status(400).json({
+                message: "User already exists"
+            });
+        }
 
+        const hashedPassword = await bcrypt.hash(
+            password,
+            10
+        );
 
-if(!name || !email || !password){
+        users.push({
+            name,
+            email,
+            password: hashedPassword
+        });
 
-return res.status(400).json({
+        console.log("✅ New User:", email);
 
-message:"All fields required"
+        res.json({
+            message: "Register success"
+        });
 
-});
+    } catch (error) {
 
-}
+        res.status(500).json({
+            message: error.message
+        });
 
-
-
-
-const existingUser =
-users.find(
-user=>user.email===email
-);
-
-
-
-if(existingUser){
-
-return res.status(400).json({
-
-message:"User already exists"
-
-});
-
-}
-
-
-
-
-const hashedPassword =
-await bcrypt.hash(
-password,
-10
-);
-
-
-
-users.push({
-
-name,
-
-email,
-
-password:hashedPassword
-
-});
-
-
-
-console.log(
-"✅ New User:",
-email
-);
-
-
-
-res.json({
-
-message:"Register success"
-
-});
-
-
-
-}
-
-catch(error){
-
-
-res.status(500).json({
-
-message:error.message
-
-});
-
-
-}
-
-
+    }
 
 });
 
@@ -179,104 +116,59 @@ message:error.message
 // ================= LOGIN =================
 
 
-app.post("/login",async(req,res)=>{
+app.post("/login", async (req, res) => {
 
+    try {
 
-try{
+        const {
+            email,
+            password
+        } = req.body;
 
+        const user = users.find(
+            u => u.email === email
+        );
 
-const {
-email,
-password
-}=req.body;
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found"
+            });
+        }
 
+        const check = await bcrypt.compare(
+            password,
+            user.password
+        );
 
+        if (!check) {
+            return res.status(401).json({
+                message: "Wrong password"
+            });
+        }
 
+        const token = jwt.sign(
+            {
+                email: user.email,
+                name: user.name
+            },
+            SECRET,
+            {
+                expiresIn: "1h"
+            }
+        );
 
-const user =
-users.find(
-u=>u.email===email
-);
+        res.json({
+            message: "Login success",
+            token
+        });
 
+    } catch (error) {
 
+        res.status(500).json({
+            message: error.message
+        });
 
-if(!user){
-
-return res.status(404).json({
-
-message:"User not found"
-
-});
-
-}
-
-
-
-
-const check =
-await bcrypt.compare(
-password,
-user.password
-);
-
-
-
-if(!check){
-
-return res.status(401).json({
-
-message:"Wrong password"
-
-});
-
-}
-
-
-
-
-const token =
-jwt.sign(
-
-{
-email:user.email,
-name:user.name
-},
-
-SECRET,
-
-{
-expiresIn:"1h"
-}
-
-);
-
-
-
-
-res.json({
-
-message:"Login success",
-
-token
-
-});
-
-
-
-}
-
-catch(error){
-
-
-res.status(500).json({
-
-message:error.message
-
-});
-
-
-}
-
+    }
 
 });
 
@@ -290,90 +182,46 @@ message:error.message
 
 
 app.post(
-"/detect-emotion",
-async(req,res)=>{
+    "/detect-emotion",
+    async (req, res) => {
 
+        try {
 
-try{
+            const { image } = req.body;
 
+            if (!image) {
+                return res.json({
+                    emotion: "No image"
+                });
+            }
 
-const {image}=req.body;
+            console.log("📸 Image received");
 
+            const response = await axios.post(
+                `${AI_SERVER}/detect`,
+                {
+                    image
+                }
+            );
 
+            console.log("🤖 AI:", response.data);
 
-if(!image){
+            res.json({
+                emotion: response.data.emotion
+            });
 
-return res.json({
+        } catch (error) {
 
-emotion:"No image"
+            console.log("❌ AI ERROR:", error.message);
 
-});
+            res.status(500).json({
+                emotion: "SERVER ERROR"
+            });
 
-}
+        }
 
-
-
-
-console.log(
-"📸 Image received"
+    }
 );
-
-
-
-const response =
-await axios.post(
-
-`${AI_SERVER}/detect`,
-
-{
-image
-}
-
-);
-
-
-
-console.log(
-"🤖 AI:",
-response.data
-);
-
-
-
-res.json({
-
-emotion:
-response.data.emotion
-
-});
-
-
-
-}
-
-
-catch(error){
-
-
-console.log(
-"❌ AI ERROR:",
-error.message
-);
-
-
-
-res.status(500).json({
-
-emotion:"SERVER ERROR"
-
-});
-
-
-}
-
-
-
-});
 
 
 
@@ -383,15 +231,11 @@ emotion:"SERVER ERROR"
 // ================= PROTECTED TEST =================
 
 
-app.get("/profile",(req,res)=>{
+app.get("/profile", (req, res) => {
 
-
-res.json({
-
-message:"Profile API working"
-
-});
-
+    res.json({
+        message: "Profile API working"
+    });
 
 });
 
@@ -404,15 +248,11 @@ message:"Profile API working"
 // ================= 404 =================
 
 
-app.use((req,res)=>{
+app.use((req, res) => {
 
-
-res.status(404).json({
-
-message:"Route not found"
-
-});
-
+    res.status(404).json({
+        message: "Route not found"
+    });
 
 });
 
@@ -426,21 +266,17 @@ message:"Route not found"
 
 
 app.listen(
-PORT,
-"0.0.0.0",
-()=>{
+    PORT,
+    "0.0.0.0",
+    () => {
 
+        console.log(
+            `🚀 Backend running on http://localhost:${PORT}`
+        );
 
-console.log(
-`🚀 Backend running on http://localhost:${PORT}`
-);
+        console.log(
+            `🧠 AI Server: ${AI_SERVER}`
+        );
 
-
-console.log(
-`🧠 AI Server: ${AI_SERVER}`
-);
-
-
-}
-
+    }
 );
