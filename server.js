@@ -7,7 +7,7 @@ const jwt = require("jsonwebtoken");
 
 const app = express();
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 
 // ================= MIDDLEWARE =================
@@ -40,7 +40,8 @@ app.use(
 
 const SECRET = "secret123";
 
-const AI_SERVER = "http://127.0.0.1:5000";
+// Points to your deployed Python AI service URL on Render
+const AI_SERVER = process.env.AI_SERVER || "https://emotions-detector-backend-a64m.onrender.com";
 
 
 
