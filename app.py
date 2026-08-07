@@ -5,6 +5,7 @@ import base64
 import cv2
 import numpy as np
 import traceback
+import os
 
 app = Flask(__name__)
 CORS(app)
@@ -28,13 +29,10 @@ def detect():
             }), 400
 
         image_base64 = data["image"]
-        print("\n📸 Image received")
 
-        # Remove base64 header if present
         if "," in image_base64:
             image_base64 = image_base64.split(",")[1]
 
-        # Decode image
         image_bytes = base64.b64decode(image_base64)
         np_arr = np.frombuffer(image_bytes, np.uint8)
         frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -46,16 +44,11 @@ def detect():
                 "message": "Image decoding failed"
             }), 400
 
-        print("✅ Image decoded:", frame.shape)
-
-        # DeepFace analysis
         result = DeepFace.analyze(
             img_path=frame,
             actions=["emotion"],
             enforce_detection=False
         )
-
-        print("🧠 RAW RESULT:", result)
 
         if isinstance(result, list):
             face = result[0]
@@ -63,7 +56,6 @@ def detect():
             face = result
 
         emotion = face.get("dominant_emotion", "unknown")
-        print("😊 FINAL EMOTION:", emotion)
 
         return jsonify({
             "success": True,
@@ -71,7 +63,6 @@ def detect():
         })
 
     except Exception as e:
-        print("❌ ERROR:", str(e))
         traceback.print_exc()
         return jsonify({
             "success": False,
@@ -79,9 +70,6 @@ def detect():
             "message": str(e)
         }), 500
 
-import os
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-    )
