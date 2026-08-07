@@ -36,8 +36,8 @@ app.use(
 
 const SECRET = "secret123";
 
-// Updated to your correct working Python AI service URL on Render (without -a64m)
-const AI_SERVER = process.env.AI_SERVER || "https://emotions-detector-backend.onrender.com";
+// Fixed with your exact correct working Python AI service URL on Render (-a64m included)
+const AI_SERVER = process.env.AI_SERVER || "https://emotions-detector-backend-a64m.onrender.com";
 
 
 
