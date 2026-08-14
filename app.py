@@ -16,8 +16,8 @@ def home():
         "status": "Emotion AI API Running 🚀"
     })
 
-@app.route("/detect", methods=["POST"])
-def detect():
+@app.route("/detect-emotion", methods=["POST"])
+def detect_emotion():
     try:
         data = request.get_json()
 
