@@ -183,7 +183,7 @@ app.post(
             console.log("📸 Image received, forwarding to Python AI server...");
 
             const response = await axios.post(
-                `${AI_SERVER}/detect`,
+                `${AI_SERVER}/detect-emotion`,
                 { image },
                 { timeout: 60000 } // 60 seconds timeout for Render cold-starts
             );
