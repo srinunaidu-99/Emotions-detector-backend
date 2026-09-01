@@ -1,249 +1,75 @@
-const express = require("express");
-const cors = require("cors");
-const axios = require("axios");
-const path = require("path");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from deepface import DeepFace
+import base64
+import cv2
+import numpy as np
+import traceback
+import os
 
-const app = express();
+app = Flask(__name__)
+CORS(app)
 
-const PORT = process.env.PORT || 3000;
-
-
-// ================= MIDDLEWARE =================
-
-app.use(
-    express.json({
-        limit: "50mb"
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({
+        "status": "Emotion AI API Running 🚀"
     })
-);
 
-app.use(
-    express.urlencoded({
-        limit: "50mb",
-        extended: true
-    })
-);
+@app.route("/detect-emotion", methods=["POST"])
+def detect_emotion():
+    try:
+        data = request.get_json()
 
-app.use(
-    cors({
-        origin: "*"
-    })
-);
+        if not data or "image" not in data:
+            return jsonify({
+                "success": False,
+                "emotion": "error",
+                "message": "No image received"
+            }), 400
 
+        image_base64 = data["image"]
 
-// ================= CONFIG =================
+        if "," in image_base64:
+            image_base64 = image_base64.split(",")[1]
 
-const SECRET = "secret123";
+        image_bytes = base64.b64decode(image_base64)
+        np_arr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
-// Fixed with your exact correct working Python AI service URL on Render (-a64m included)
-const AI_SERVER = process.env.AI_SERVER || "https://emotions-detector-backend-a64m.onrender.com";
+        if frame is None:
+            return jsonify({
+                "success": False,
+                "emotion": "error",
+                "message": "Image decoding failed"
+            }), 400
 
+        result = DeepFace.analyze(
+            img_path=frame,
+            actions=["emotion"],
+            enforce_detection=False
+        )
 
+        if isinstance(result, list):
+            face = result[0]
+        else:
+            face = result
 
-// ================= TEMP DATABASE =================
+        emotion = face.get("dominant_emotion", "unknown")
 
-const users = [];
+        return jsonify({
+            "success": True,
+            "emotion": str(emotion)
+        })
 
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "emotion": "error",
+            "message": str(e)
+        }), 500
 
-
-// ================= HOME =================
-
-app.get("/", (req, res) => {
-    res.json({
-        message: "Emotion Detector Node.js Backend is Running 🚀",
-        ai_server: AI_SERVER
-    });
-});
-
-
-
-// ================= REGISTER =================
-
-app.post("/register", async (req, res) => {
-    try {
-        const {
-            name,
-            email,
-            password
-        } = req.body;
-
-        if (!name || !email || !password) {
-            return res.status(400).json({
-                message: "All fields required"
-            });
-        }
-
-        const existingUser = users.find(
-            user => user.email === email
-        );
-
-        if (existingUser) {
-            return res.status(400).json({
-                message: "User already exists"
-            });
-        }
-
-        const hashedPassword = await bcrypt.hash(
-            password,
-            10
-        );
-
-        users.push({
-            name,
-            email,
-            password: hashedPassword
-        });
-
-        console.log("✅ New User:", email);
-
-        res.json({
-            message: "Register success"
-        });
-
-    } catch (error) {
-        res.status(500).json({
-            message: error.message
-        });
-    }
-});
-
-
-
-// ================= LOGIN =================
-
-app.post("/login", async (req, res) => {
-    try {
-        const {
-            email,
-            password
-        } = req.body;
-
-        const user = users.find(
-            u => u.email === email
-        );
-
-        if (!user) {
-            return res.status(404).json({
-                message: "User not found"
-            });
-        }
-
-        const check = await bcrypt.compare(
-            password,
-            user.password
-        );
-
-        if (!check) {
-            return res.status(401).json({
-                message: "Wrong password"
-            });
-        }
-
-        const token = jwt.sign(
-            {
-                email: user.email,
-                name: user.name
-            },
-            SECRET,
-            {
-                expiresIn: "1h"
-            }
-        );
-
-        res.json({
-            message: "Login success",
-            token
-        });
-
-    } catch (error) {
-        res.status(500).json({
-            message: error.message
-        });
-    }
-});
-
-
-
-// ================= EMOTION AI =================
-
-app.post(
-    "/detect-emotion",
-    async (req, res) => {
-        try {
-            const { image } = req.body;
-
-            if (!image) {
-                return res.status(400).json({
-                    success: false,
-                    emotion: "No image"
-                });
-            }
-
-            console.log("📸 Image received, forwarding to Python AI server...");
-
-            const response = await axios.post(
-                `${AI_SERVER}/detect-emotion`,
-                { image },
-                { timeout: 60000 } // 60 seconds timeout for Render cold-starts
-            );
-
-            console.log("🤖 AI Response:", response.data);
-
-            res.json({
-                success: true,
-                emotion: response.data.emotion
-            });
-
-        } catch (error) {
-            if (error.response) {
-                console.log("❌ AI SERVER ERROR DATA:", error.response.data);
-            } else {
-                console.log("❌ AI ERROR:", error.message);
-            }
-
-            res.status(500).json({
-                success: false,
-                emotion: "SERVER ERROR",
-                details: error.response ? error.response.data : error.message
-            });
-        }
-    }
-);
-
-
-
-// ================= PROTECTED TEST =================
-
-app.get("/profile", (req, res) => {
-    res.json({
-        message: "Profile API working"
-    });
-});
-
-
-
-// ================= 404 =================
-
-app.use((req, res) => {
-    res.status(404).json({
-        message: "Route not found"
-    });
-});
-
-
-
-// ================= START =================
-
-app.listen(
-    PORT,
-    "0.0.0.0",
-    () => {
-        console.log(
-            `🚀 Backend running on http://localhost:${PORT}`
-        );
-        console.log(
-            `🧠 AI Server: ${AI_SERVER}`
-        );
-    }
-);
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
