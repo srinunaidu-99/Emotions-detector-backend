@@ -1,75 +1,388 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from deepface import DeepFace
-import base64
-import cv2
-import numpy as np
-import traceback
-import os
+import express from "express";
+import cors from "cors";
+import { GoogleGenAI } from "@google/genai";
+import dotenv from "dotenv";
+import multer from "multer";
+import fs from "fs";
+import path from "path";
+import mongoose from "mongoose";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcrypt";
+import { fileURLToPath } from "url";
 
-app = Flask(__name__)
-CORS(app)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({
-        "status": "Emotion AI API Running 🚀"
-    })
+dotenv.config({
+    path: path.resolve(__dirname, "../.env")
+});
 
-@app.route("/detect-emotion", methods=["POST"])
-def detect_emotion():
-    try:
-        data = request.get_json()
+const app = express();
 
-        if not data or "image" not in data:
-            return jsonify({
-                "success": False,
-                "emotion": "error",
-                "message": "No image received"
-            }), 400
+const PORT = process.env.PORT || 5000;
+const JWT_SECRET = process.env.JWT_SECRET || "studenthub_secret";
 
-        image_base64 = data["image"]
+app.use(cors());
 
-        if "," in image_base64:
-            image_base64 = image_base64.split(",")[1]
+app.use(express.json({
+    limit: "50mb"
+}));
 
-        image_bytes = base64.b64decode(image_base64)
-        np_arr = np.frombuffer(image_bytes, np.uint8)
-        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+app.use(express.urlencoded({
+    extended: true,
+    limit: "50mb"
+}));
 
-        if frame is None:
-            return jsonify({
-                "success": False,
-                "emotion": "error",
-                "message": "Image decoding failed"
-            }), 400
+app.use(
+    express.static(
+        path.join(__dirname, "../frontend")
+    )
+);
 
-        result = DeepFace.analyze(
-            img_path=frame,
-            actions=["emotion"],
-            enforce_detection=False
-        )
+mongoose.connect(
+    process.env.MONGO_URI ||
+    "mongodb://127.0.0.1:27017/studenthub"
+)
+.then(() => {
+    console.log("✅ MongoDB Connected");
+})
+.catch((err) => {
+    console.log("❌ Mongo Error:", err.message);
+});
 
-        if isinstance(result, list):
-            face = result[0]
-        else:
-            face = result
+const userSchema = new mongoose.Schema({
+    username: {
+        type: String,
+        required: true,
+        unique: true
+    },
+    password: {
+        type: String,
+        required: true
+    }
+});
 
-        emotion = face.get("dominant_emotion", "unknown")
+const User = mongoose.model("User", userSchema);
 
-        return jsonify({
-            "success": True,
-            "emotion": str(emotion)
-        })
+const chatSchema = new mongoose.Schema({
+    userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+    },
+    messages: Array,
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
+});
 
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({
-            "success": False,
-            "emotion": "error",
-            "message": str(e)
-        }), 500
+const Chat = mongoose.model("Chat", chatSchema);
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+function auth(req, res, next) {
+    try {
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader) {
+            return res.status(401).json({
+                error: "No token provided"
+            });
+        }
+
+        const token = authHeader.split(" ")[1];
+
+        req.user = jwt.verify(
+            token,
+            JWT_SECRET
+        );
+
+        next();
+
+    } catch (err) {
+        return res.status(401).json({
+            error: "Invalid or expired token"
+        });
+    }
+}
+
+const uploadDir = path.join(__dirname, "uploads");
+
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir);
+}
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        cb(null, `${Date.now()}-${file.originalname}`);
+    }
+});
+
+const upload = multer({
+    storage,
+    limits: {
+        fileSize: 10 * 1024 * 1024
+    }
+});
+
+// Initialize Google Gen AI client
+const ai = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY
+});
+
+app.post("/api/register", async (req, res) => {
+    try {
+        const { username, password } = req.body;
+
+        if (!username || !password) {
+            return res.status(400).json({
+                error: "Username and password required"
+            });
+        }
+
+        const existingUser = await User.findOne({ username });
+
+        if (existingUser) {
+            return res.status(400).json({
+                error: "User already exists"
+            });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        await User.create({
+            username,
+            password: hashedPassword
+        });
+
+        res.json({
+            message: "Registration successful"
+        });
+
+    } catch (err) {
+        console.log(err);
+        res.status(500).json({
+            error: "Registration failed"
+        });
+    }
+});
+
+app.post("/api/login", async (req, res) => {
+    try {
+        const { username, password } = req.body;
+
+        const user = await User.findOne({ username });
+
+        if (!user) {
+            return res.status(400).json({
+                error: "Invalid credentials"
+            });
+        }
+
+        const validPassword = await bcrypt.compare(
+            password,
+            user.password
+        );
+
+        if (!validPassword) {
+            return res.status(400).json({
+                error: "Invalid credentials"
+            });
+        }
+
+        const token = jwt.sign(
+            { id: user._id },
+            JWT_SECRET,
+            { expiresIn: "24h" }
+        );
+
+        res.json({
+            token,
+            username: user.username
+        });
+
+    } catch (err) {
+        res.status(500).json({
+            error: "Login failed"
+        });
+    }
+});
+
+app.post(
+    "/api/chat",
+    auth,
+    upload.array("files", 5),
+    async (req, res) => {
+        const uploadedFiles = req.files || [];
+
+        try {
+            const { message, isSummarize } = req.body;
+            const userId = req.user.id;
+
+            if (!message && uploadedFiles.length === 0) {
+                return res.status(400).json({
+                    error: "Message or files required"
+                });
+            }
+
+            let fileContext = "";
+
+            for (const file of uploadedFiles) {
+                if (
+                    file.mimetype.includes("text") ||
+                    file.mimetype.includes("json") ||
+                    file.mimetype.includes("javascript") ||
+                    file.mimetype.includes("html") ||
+                    file.mimetype.includes("css")
+                ) {
+                    const data = fs.readFileSync(file.path, "utf-8");
+                    fileContext += `\n[File: ${file.originalname}]\n${data}\n`;
+                } else if (file.mimetype.startsWith("image/")) {
+                    fileContext += `\n[User uploaded image: ${file.originalname}]\n`;
+                } else {
+                    fileContext += `\n[Uploaded File: ${file.originalname}]\n`;
+                }
+            }
+
+            let finalPrompt = message || "";
+
+            if (isSummarize === "true") {
+                finalPrompt = `Summarize this clearly:\n\n${message}`;
+            }
+
+            finalPrompt += fileContext ? `\n\nUploaded Content:\n${fileContext}` : "";
+
+            const systemInstruction = `
+You are Student Hub AI.
+1. Default language is English.
+2. If user speaks Telugu or Tenglish, reply in Telugu/Tenglish.
+3. Help students clearly.
+4. Summarize when requested.
+5. Analyze uploaded files.
+6. Keep answers clean and readable.
+`;
+
+            const responseStream = await ai.models.generateContentStream({
+                model: "gemini-3.6-flash",
+                contents: finalPrompt,
+                config: {
+                    systemInstruction: systemInstruction
+                }
+            });
+
+            res.writeHead(200, {
+                "Content-Type": "text/plain; charset=utf-8",
+                "Transfer-Encoding": "chunked",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
+            });
+
+            let fullReply = "";
+
+            for await (const chunk of responseStream) {
+                const content = chunk.text || "";
+                if (content) {
+                    fullReply += content;
+                    res.write(content);
+                }
+            }
+
+            res.end();
+
+            await Chat.create({
+                userId,
+                messages: [
+                    { role: "user", content: message },
+                    { role: "assistant", content: fullReply }
+                ]
+            });
+
+            for (const f of uploadedFiles) {
+                if (fs.existsSync(f.path)) {
+                    fs.unlinkSync(f.path);
+                }
+            }
+
+        } catch (err) {
+            console.log("❌ Chat Error:", err);
+
+            for (const f of uploadedFiles) {
+                if (fs.existsSync(f.path)) {
+                    fs.unlinkSync(f.path);
+                }
+            }
+
+            if (!res.headersSent) {
+                res.status(500).json({
+                    error: err.message || "AI service error"
+                });
+            } else {
+                res.end();
+            }
+        }
+    }
+);
+
+// Emotion Detection Proxy Route
+const handleEmotionDetection = async (req, res) => {
+    try {
+        const { image } = req.body;
+
+        if (!image) {
+            return res.status(400).json({ error: "Image data required" });
+        }
+
+        const aiServerUrl = process.env.AI_SERVER || "http://localhost:5001";
+
+        const pythonResponse = await fetch(`${aiServerUrl}/detect-emotion`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ image })
+        });
+
+        if (!pythonResponse.ok) {
+            throw new Error(`Python AI service responded with status ${pythonResponse.status}`);
+        }
+
+        const data = await pythonResponse.json();
+        res.json(data);
+
+    } catch (err) {
+        console.log("❌ Emotion Detection Error:", err.message);
+        res.status(500).json({ error: "Emotion detection service error" });
+    }
+};
+
+app.post("/detect-emotion", auth, handleEmotionDetection);
+app.post("/api/detect-emotion", auth, handleEmotionDetection);
+
+app.get(
+    "/api/history",
+    auth,
+    async (req, res) => {
+        try {
+            const chats = await Chat.find({ userId: req.user.id })
+                .sort({ createdAt: -1 })
+                .limit(20);
+
+            res.json(chats);
+        } catch (err) {
+            res.status(500).json({
+                error: "Failed to fetch history"
+            });
+        }
+    }
+);
+
+app.get("/", (req, res) => {
+    res.sendFile(
+        path.join(__dirname, "../frontend/login.html")
+    );
+});
+
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+});
