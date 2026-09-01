@@ -6,6 +6,29 @@ import cv2
 import numpy as np
 import traceback
 import os
+import requests
+from pathlib import Path
+
+# Pre-download DeepFace emotion weights on startup to avoid request timeouts
+weights_dir = Path.home() / ".deepface" / "weights"
+weights_dir.mkdir(parents=True, exist_ok=True)
+
+weight_file = weights_dir / "facial_expression_model_weights.h5"
+weight_url = "https://github.com/serengil/deepface_models/releases/download/v1.0/facial_expression_model_weights.h5"
+
+if not weight_file.exists():
+    print("📥 Downloading DeepFace emotion model weights during startup...")
+    try:
+        response = requests.get(weight_url, stream=True)
+        if response.status_code == 200:
+            with open(weight_file, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            print("✅ Weights downloaded successfully!")
+        else:
+            print(f"❌ Failed to download weights, status: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Error downloading weights: {e}")
 
 app = Flask(__name__)
 CORS(app)
